@@ -124,27 +124,57 @@ fn telugu_ui_text_uses_craft_fonts() {
     }
 }
 
-/// On a machine with a suitable installed font, the installed definitions end every family
-/// with it and Arabic text has glyphs; the embedded-only definitions never name it.
+/// On a machine with suitable installed fonts, the installed definitions end every family with
+/// them, after every embedded face, and file names in the scripts they cover have glyphs (#586,
+/// #407, #664); the embedded-only definitions never name them.
 #[test]
 fn system_fallback_fills_missing_scripts() {
-    assert!(!theme::font_definitions().font_data.contains_key(theme::SYSTEM_FALLBACK));
+    let is_fallback = |n: &String| n.starts_with(theme::SYSTEM_FALLBACK);
+    assert!(!theme::font_definitions().font_data.keys().any(is_fallback));
     let defs = theme::installed_font_definitions(false);
-    if !defs.font_data.contains_key(theme::SYSTEM_FALLBACK) {
+    let installed: Vec<String> = defs.font_data.keys().filter(|n| is_fallback(n)).cloned().collect();
+    if installed.is_empty() {
         eprintln!("skipping system_fallback_fills_missing_scripts: no installed fallback font (or PDFCRAFT_SYSTEM_FONTS=0)");
-        assert!(defs.families.values().all(|stack| !stack.iter().any(|n| n == theme::SYSTEM_FALLBACK)));
+        assert!(defs.families.values().all(|stack| !stack.iter().any(is_fallback)));
         return;
     }
     for (family, stack) in &defs.families {
-        assert_eq!(stack.last().map(String::as_str), Some(theme::SYSTEM_FALLBACK), "{family:?}: {stack:?}");
-        assert_eq!(stack.iter().filter(|n| *n == theme::SYSTEM_FALLBACK).count(), 1, "{family:?}");
+        let first = stack.iter().position(is_fallback).expect("fallbacks in every family");
+        assert!(stack[first..].iter().all(is_fallback), "{family:?}: installed faces come last: {stack:?}");
+        assert_eq!(stack.iter().filter(|n| is_fallback(n)).count(), installed.len(), "{family:?}: {stack:?}");
     }
     let mut fonts = Fonts::new(TextOptions::default(), defs);
+    // Every installed face draws its own script (the tag after the prefix).
+    let samples =
+        [("Arab", ARABIC), ("Hebr", "שלום.pdf"), ("Hang", "한국어.pdf"), ("Thai", "ภาษาไทย.pdf"), ("Hani", "中文.pdf"), ("Deva", "हिन्दी.pdf")];
+    for (tag, text) in samples {
+        if installed.iter().any(|n| n.ends_with(tag)) {
+            for id in families() {
+                assert!(fonts.has_glyphs(&id, text), "{id:?} lacks {text}");
+            }
+            assert!(layout_widths(&mut fonts, text).iter().all(|w| w.is_finite() && *w > 0.0), "{text}");
+        }
+    }
     for id in families() {
-        assert!(fonts.has_glyphs(&id, ARABIC), "{id:?} lacks {ARABIC}");
         assert!(fonts.has_glyphs(&id, "PdfCraft"), "{id:?}");
     }
-    assert!(layout_widths(&mut fonts, ARABIC).iter().all(|w| w.is_finite() && *w > 0.0));
+}
+
+/// On macOS the system always has Hebrew, Hangul and Thai faces: file names in those scripts
+/// draw (#586, #407, #664) rather than as boxes.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_file_names_in_other_scripts_have_glyphs() {
+    if std::env::var_os("PDFCRAFT_SYSTEM_FONTS").is_some_and(|v| v == "0") {
+        return;
+    }
+    let mut fonts = Fonts::new(TextOptions::default(), theme::installed_font_definitions(false));
+    for text in ["שלום.pdf", "한국어.pdf", "ภาษาไทย.pdf", "中文.pdf", "日本語.pdf", "हिन्दी.pdf", "العربية.pdf"]
+    {
+        for id in families() {
+            assert!(fonts.has_glyphs(&id, text), "{id:?} lacks {text}");
+        }
+    }
 }
 
 /// Without craft-fonts the interface fonts still install and lay out any text (Japanese falls
