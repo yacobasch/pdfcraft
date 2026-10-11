@@ -141,21 +141,28 @@ pub fn install_fonts_for(ctx: &egui::Context, prefer_hans: bool) {
     ctx.set_fonts(installed_font_definitions(prefer_hans));
 }
 
-/// The name of the installed face [`installed_font_definitions`] may add after the embedded ones.
+/// The name prefix of the installed faces [`installed_font_definitions`] may add after the
+/// embedded ones: `system-fallback-Hebr`, `system-fallback-Hani`…
 pub const SYSTEM_FALLBACK: &str = "system-fallback";
 
-/// What [`install_fonts_for`] installs: [`font_definitions_for`], then, on desktop, one face
-/// already installed on this machine as the last fallback of every family. It only draws
-/// characters no embedded face has (an Arabic file name in a build without craft-fonts);
-/// `PDFCRAFT_SYSTEM_FONTS=0` leaves it out.
+/// What [`install_fonts_for`] installs: [`font_definitions_for`], then, on desktop, faces already
+/// installed on this machine as the last fallbacks of every family, one per script no embedded
+/// face covers. They only draw characters no embedded face has (a Hebrew, Korean or Thai file
+/// name; Arabic or Japanese in a build without craft-fonts); `PDFCRAFT_SYSTEM_FONTS=0` leaves
+/// them out.
 pub fn installed_font_definitions(prefer_hans: bool) -> FontDefinitions {
     #[cfg_attr(target_arch = "wasm32", expect(unused_mut))]
     let mut fonts = font_definitions_for(prefer_hans);
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(data) = crate::system_fonts::fallback() {
-        fonts.font_data.insert(SYSTEM_FALLBACK.to_owned(), data);
-        for stack in fonts.families.values_mut() {
-            stack.push(SYSTEM_FALLBACK.to_owned());
+    {
+        let embedded: Vec<&FontData> = fonts.font_data.values().map(|d| d.as_ref()).collect();
+        let installed = crate::system_fonts::fallbacks(&embedded);
+        for f in installed {
+            let name = format!("{SYSTEM_FALLBACK}-{}", f.tag);
+            fonts.font_data.insert(name.clone(), Arc::clone(&f.data));
+            for stack in fonts.families.values_mut() {
+                stack.push(name.clone());
+            }
         }
     }
     fonts
